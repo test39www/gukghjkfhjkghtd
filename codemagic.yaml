@@ -3,42 +3,46 @@ workflows:
     name: Build iOS IPA unsigned
     max_build_duration: 60
     instance_type: mac_mini_m2
-
+​
     environment:
       node: 18
-      xcode: latest
-      cocoapods: default
-
+      # RN 0.69.6 / Expo SDK 46 do NOT build on Xcode 16 (C++ / codegen breakage).
+      # Pin to a 2022-era Xcode that matches the project.
+      xcode: 14.3
+      # New CocoaPods breaks RN 0.69 codegen (use_react_native_codegen! wrong number
+      # of arguments). Pin to the version contemporary with RN 0.69.
+      cocoapods: 1.11.3
+​
     scripts:
       - name: Install dependencies
         script: |
           cd frontend
           npm install --legacy-peer-deps
-
+​
       - name: Generate iOS project
         script: |
           cd frontend
           export CI=1
           export EXPO_NO_TELEMETRY=1
           npx expo prebuild --platform ios --clean
-
+​
       - name: Force iOS deployment target 12.0
         script: |
           cd frontend
-
+​
           if grep -q "platform :ios" ios/Podfile; then
             sed -i '' "s/platform :ios.*/platform :ios, '12.0'/" ios/Podfile
           else
             printf "platform :ios, '12.0'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
-
+​
           echo "Podfile first lines:"
           head -n 15 ios/Podfile
-
+​
       - name: Ruby 3.2 compatibility shim (external, not in Podfile)
         script: |
           cd frontend/ios
-
+​
           # Ruby 3.2 removed File.exists?; old Expo SDK 46 / CocoaPods scripts still call it.
           # IMPORTANT: this must NOT be injected into the Podfile itself, because the Podfile
           # is eval'd inside the Pod::Podfile namespace, so `class File` there would create
@@ -50,25 +54,25 @@ workflows:
             end
           end unless File.respond_to?(:exists?)
           RUBY
-
+​
           echo "Podfile first lines:"
           head -n 15 Podfile
-
+​
       - name: Install CocoaPods
         script: |
           cd frontend/ios
           RUBYOPT="-r$(pwd)/podfile_patch.rb" pod install --repo-update
-
+​
       - name: Build unsigned iOS app
         script: |
           cd frontend/ios
-
+​
           WORKSPACE=$(ls *.xcworkspace | head -n 1)
           SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {getline; print $1}')
-
+​
           echo "Workspace: $WORKSPACE"
           echo "Scheme: $SCHEME"
-
+​
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -78,31 +82,32 @@ workflows:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=""
-
+​
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
-
+​
           APP_PATH=$(find build -name "*.app" -type d | head -n 1)
-
+​
           echo "APP_PATH=$APP_PATH"
-
+​
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: .app file not found"
             exit 1
           fi
-
+​
           rm -rf Payload
           mkdir -p Payload
-
+​
           cp -R "$APP_PATH" Payload/
-
+​
           zip -r unsigned.ipa Payload
-
+​
           mkdir -p ../build-output
           cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
-
+​
     artifacts:
       - frontend/build-output/ipad-youtube-client-unsigned.ipa
       - frontend/ios/unsigned.ipa
       - frontend/ios/build/Build/Products/Release-iphoneos/*.app
+​
