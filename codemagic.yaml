@@ -22,14 +22,14 @@ workflows:
           export EXPO_NO_TELEMETRY=1
           npx expo prebuild --platform ios --clean
 
-      - name: Force iOS deployment target 12.0
+      - name: Force iOS deployment target 12.4
         script: |
           cd frontend
 
           if grep -q "platform :ios" ios/Podfile; then
-            sed -i '' "s/platform :ios.*/platform :ios, '12.0'/" ios/Podfile
+            sed -i '' "s/platform :ios.*/platform :ios, '12.4'/" ios/Podfile
           else
-            printf "platform :ios, '12.0'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
+            printf "platform :ios, '12.4'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
 
           echo "Podfile first lines:"
@@ -82,9 +82,11 @@ workflows:
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
+            IPHONEOS_DEPLOYMENT_TARGET=12.4 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            PROVISIONING_PROFILE_SPECIFIER=""
 
       - name: Create unsigned IPA
         script: |
