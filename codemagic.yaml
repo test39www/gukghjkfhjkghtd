@@ -102,10 +102,31 @@ workflows:
         script: |
           cd frontend/ios
 
-          WORKSPACE=$(ls *.xcworkspace | head -n 1)
-          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {getline; print $1}')
+          echo "Current directory:"
+          pwd
+
+          echo "Files:"
+          ls -la
+
+          WORKSPACE=$(find . -maxdepth 1 -type d -name "*.xcworkspace" | head -n 1)
+
+          if [ -z "$WORKSPACE" ]; then
+            echo "ERROR: .xcworkspace not found"
+            exit 1
+          fi
 
           echo "Workspace: $WORKSPACE"
+
+          echo "Available schemes:"
+          xcodebuild -list -workspace "$WORKSPACE"
+
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {flag=1; next} flag && NF {print $1; exit}')
+
+          if [ -z "$SCHEME" ]; then
+            echo "Scheme not detected automatically, using fallback"
+            SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          fi
+
           echo "Scheme: $SCHEME"
 
           xcodebuild \
