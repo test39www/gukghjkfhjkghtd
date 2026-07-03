@@ -35,6 +35,53 @@ workflows:
           echo "Podfile first lines:"
           head -n 20 ios/Podfile
 
+      - name: Patch Podfile - folly libc++ fix (Xcode 16)
+        script: |
+          cd frontend
+
+          # RCT-Folly json.cpp fails on Xcode 16 because new libc++ removed
+          # std::unary_function / std::binary_function. Re-enable them for ALL
+          # pod targets via post_install (command-line override would clobber
+          # folly's own required defines, so we inject into the Podfile instead).
+          cat > inject_folly_fix.rb <<'RUBY'
+          podfile = "ios/Podfile"
+          content = File.read(podfile)
+          marker  = "# folly-libcpp-fix"
+
+          inject = <<~PATCH
+            #{marker}
+            installer.pods_project.targets.each do |__t|
+              __t.build_configurations.each do |__c|
+                defs = __c.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] || ['$(inherited)']
+                defs = [defs] unless defs.is_a?(Array)
+                unless defs.include?('_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1')
+                  defs << '_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION=1'
+                end
+                __c.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = defs
+                __c.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
+              end
+            end
+          PATCH
+
+          if content.include?(marker)
+            puts "folly fix already present"
+          elsif content =~ /post_install do \|installer\|/
+            content = content.sub(/post_install do \|installer\|/) { |m| "#{m}\n#{inject}" }
+            File.write(podfile, content)
+            puts "folly fix injected into existing post_install"
+          else
+            # No post_install block exists -> append one.
+            content << "\n\npost_install do |installer|\n#{inject}\nend\n"
+            File.write(podfile, content)
+            puts "folly fix appended as new post_install"
+          end
+          RUBY
+
+          ruby inject_folly_fix.rb
+
+          echo "----- Podfile (post_install area) -----"
+          grep -n "folly-libcpp-fix\|post_install\|_LIBCPP_ENABLE" ios/Podfile || true
+
       - name: Ruby 3.2 compatibility shim (external, not in Podfile)
         script: |
           cd frontend/ios
@@ -104,7 +151,6 @@ workflows:
           if [ -z "$APP_SCHEME" ]; then echo "ERROR: App scheme not found"; exit 1; fi
           echo "App scheme: $APP_SCHEME"
 
-          # Plain build (NOT archive). c++17 fixes RCT-Folly json.cpp on Xcode 16.
           xcodebuild clean build \
             -workspace "$WORKSPACE" \
             -scheme "$APP_SCHEME" \
@@ -113,7 +159,6 @@ workflows:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             IPHONEOS_DEPLOYMENT_TARGET=12.4 \
-            CLANG_CXX_LANGUAGE_STANDARD=c++17 \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
@@ -134,19 +179,17 @@ workflows:
 
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: real .app not found in products dir"
-            echo "----- full build tree (.app dirs) -----"
             find build -name "*.app" -type d -exec du -sh {} \; || true
             exit 1
           fi
 
-          # Sanity check: the .app MUST contain a Mach-O executable.
           APP_NAME=$(basename "$APP_PATH" .app)
           BIN="$APP_PATH/$APP_NAME"
           echo "App size:"; du -sh "$APP_PATH"
           echo "Contents:"; ls -la "$APP_PATH"
 
           if [ ! -f "$BIN" ]; then
-            echo "ERROR: executable '$BIN' missing -> build produced an empty app"
+            echo "ERROR: executable '$BIN' missing -> empty app"
             exit 1
           fi
           file "$BIN"
