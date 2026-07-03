@@ -32,7 +32,6 @@ workflows:
             printf "platform :ios, '12.4'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
 
-          echo "Podfile first lines:"
           head -n 20 ios/Podfile
 
       - name: Patch old Expo SDK 46 for new Ruby
@@ -58,19 +57,9 @@ workflows:
           end
           RUBY
 
-          echo "Patched Podfile:"
-          head -n 35 ios/Podfile
-
       - name: Patch React Native boost podspec
         script: |
           cd frontend
-
-          BOOST_PODSPEC="node_modules/react-native/third-party-podspecs/boost.podspec"
-
-          if [ ! -f "$BOOST_PODSPEC" ]; then
-            echo "ERROR: boost.podspec not found"
-            exit 1
-          fi
 
           ruby - <<'RUBY'
           path = "node_modules/react-native/third-party-podspecs/boost.podspec"
@@ -83,9 +72,6 @@ workflows:
 
           File.write(path, content)
           RUBY
-
-          echo "Patched boost.podspec:"
-          cat "$BOOST_PODSPEC"
 
       - name: Clean CocoaPods boost cache
         script: |
@@ -102,12 +88,6 @@ workflows:
         script: |
           cd frontend/ios
 
-          echo "Current directory:"
-          pwd
-
-          echo "Files:"
-          ls -la
-
           WORKSPACE=$(find . -maxdepth 1 -type d -name "*.xcworkspace" | head -n 1)
 
           if [ -z "$WORKSPACE" ]; then
@@ -115,34 +95,10 @@ workflows:
             exit 1
           fi
 
-          echo "Workspace: $WORKSPACE"
-
-          echo "Available schemes:"
-          xcodebuild -list -workspace "$WORKSPACE"
-
           APP_SCHEME=$(basename "$WORKSPACE" .xcworkspace)
 
-          echo "Trying app scheme from workspace name: $APP_SCHEME"
-
-          if ! xcodebuild -list -workspace "$WORKSPACE" | grep -q "$APP_SCHEME"; then
-            echo "Workspace-name scheme not found, detecting non-Pods scheme..."
-            APP_SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '
-              /Schemes:/ {flag=1; next}
-              flag && NF {
-                if ($1 !~ /^Pods/ && $1 !~ /^React/ && $1 !~ /^Expo/) {
-                  print $1
-                  exit
-                }
-              }
-            ')
-          fi
-
-          if [ -z "$APP_SCHEME" ]; then
-            echo "ERROR: App scheme not found"
-            exit 1
-          fi
-
-          echo "Final app scheme: $APP_SCHEME"
+          echo "Workspace: $WORKSPACE"
+          echo "Scheme: $APP_SCHEME"
 
           xcodebuild clean build \
             -workspace "$WORKSPACE" \
@@ -156,44 +112,55 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-          echo "Build folder:"
-          find build -maxdepth 6 -type d | head -n 200
+          echo "Release products:"
+          ls -lah build/Build/Products/Release-iphoneos || true
 
-          echo "Looking for .app:"
-          find build -name "*.app" -type d
+          echo "Apps in Release-iphoneos:"
+          find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d -print || true
 
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
 
-          echo "Searching for .app..."
-          find build -name "*.app" -type d || true
-
-          APP_PATH=$(find build -name "*.app" -type d | grep -v "/Pods" | head -n 1)
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
 
           echo "APP_PATH=$APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app file not found"
-            echo "Full build tree:"
-            find build -maxdepth 8 -type d || true
+            echo "ERROR: real .app not found in Release-iphoneos"
+            find build -name "*.app" -type d -print || true
             exit 1
           fi
+
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR: Info.plist not found. This is not a real app."
+            ls -lah "$APP_PATH"
+            exit 1
+          fi
+
+          APP_NAME=$(basename "$APP_PATH" .app)
+
+          if [ ! -f "$APP_PATH/$APP_NAME" ]; then
+            echo "WARNING: executable with app name not found, listing app contents:"
+            ls -lah "$APP_PATH"
+          fi
+
+          echo "Real app size:"
+          du -sh "$APP_PATH"
+          find "$APP_PATH" -maxdepth 2 -type f | head -n 50
 
           rm -rf Payload
           mkdir -p Payload
 
           cp -R "$APP_PATH" Payload/
 
-          zip -r unsigned.ipa Payload
+          zip -qry ipad-youtube-client-unsigned.ipa Payload
+
+          echo "IPA size:"
+          ls -lh ipad-youtube-client-unsigned.ipa
 
           mkdir -p ../build-output
-          cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
-
-          echo "IPA created:"
-          ls -lh ../build-output/
+          cp ipad-youtube-client-unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
 
     artifacts:
       - frontend/build-output/ipad-youtube-client-unsigned.ipa
-      - frontend/ios/unsigned.ipa
-      - frontend/ios/build/Build/Products/Release-iphoneos/*.app
