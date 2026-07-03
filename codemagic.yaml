@@ -5,29 +5,44 @@ workflows:
     instance_type: mac_mini_m2
 
     environment:
-      node: 20
+      node: 18
       xcode: latest
       cocoapods: default
 
     scripts:
       - name: Install dependencies
         script: |
+          cd frontend
           npm install
 
       - name: Generate iOS project
         script: |
+          cd frontend
           npx expo prebuild --platform ios --clean
+
+      - name: Force iOS deployment target 12.0
+        script: |
+          cd frontend
+          if grep -q "platform :ios" ios/Podfile; then
+            sed -i '' "s/platform :ios.*/platform :ios, '12.0'/" ios/Podfile
+          else
+            printf "platform :ios, '12.0'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
+          fi
+          head -n 15 ios/Podfile
 
       - name: Install CocoaPods
         script: |
-          cd ios
-          pod install
+          cd frontend/ios
+          pod install --repo-update
 
       - name: Build unsigned iOS app
         script: |
-          cd ios
+          cd frontend/ios
           WORKSPACE=$(ls *.xcworkspace | head -n 1)
           SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {getline; print $1}')
+          echo "Workspace: $WORKSPACE"
+          echo "Scheme: $SCHEME"
+
           xcodebuild \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
@@ -40,12 +55,15 @@ workflows:
 
       - name: Create unsigned IPA
         script: |
-          cd ios
+          cd frontend/ios
           APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          echo "APP_PATH=$APP_PATH"
+
+          rm -rf Payload
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           zip -r unsigned.ipa Payload
 
     artifacts:
-      - ios/unsigned.ipa
-      - ios/build/Build/Products/Release-iphoneos/*.app
+      - frontend/ios/unsigned.ipa
+      - frontend/ios/build/Build/Products/Release-iphoneos/*.app
