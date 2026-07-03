@@ -35,37 +35,29 @@ workflows:
           echo "Podfile first lines:"
           head -n 15 ios/Podfile
 
-      - name: Patch old Expo Podfile for Ruby 3.2
+      - name: Ruby 3.2 compatibility shim (external, not in Podfile)
         script: |
-          cd frontend
+          cd frontend/ios
 
-          ruby - <<'RUBY'
-          podfile = "ios/Podfile"
-
-          patch = <<~'PATCH'
-          # Compatibility patch for old Expo SDK 46 on Ruby 3.2+
-          # Ruby 3.2 removed File.exists?, but old Expo/CocoaPods scripts still call it.
+          # Ruby 3.2 removed File.exists?; old Expo SDK 46 / CocoaPods scripts still call it.
+          # IMPORTANT: this must NOT be injected into the Podfile itself, because the Podfile
+          # is eval'd inside the Pod::Podfile namespace, so `class File` there would create
+          # Pod::Podfile::File and break File.dirname on the autolinking require line.
+          cat > podfile_patch.rb <<'RUBY'
           class File
             def self.exists?(path)
               exist?(path)
             end
           end unless File.respond_to?(:exists?)
-          PATCH
-
-          content = File.read(podfile)
-
-          unless content.include?("Compatibility patch for old Expo SDK 46")
-            File.write(podfile, patch + "\n\n" + content)
-          end
           RUBY
 
-          echo "Patched Podfile:"
-          head -n 30 ios/Podfile
+          echo "Podfile first lines:"
+          head -n 15 Podfile
 
       - name: Install CocoaPods
         script: |
           cd frontend/ios
-          pod install --repo-update
+          RUBYOPT="-r$(pwd)/podfile_patch.rb" pod install --repo-update
 
       - name: Build unsigned iOS app
         script: |
