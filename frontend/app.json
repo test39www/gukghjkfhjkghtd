@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "iPad YouTube Client",
+    "slug": "ipad-youtube-client",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.ipadyoutubeclient",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    },
+    "android": {
+      "package": "com.example.ipadyoutubeclient"
+    }
+  }
+}
