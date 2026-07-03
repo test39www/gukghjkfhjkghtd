@@ -6,6 +6,7 @@ workflows:
 
     environment:
       node: 18
+      xcode: 16.0
       cocoapods: default
 
     scripts:
