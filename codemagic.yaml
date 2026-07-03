@@ -120,18 +120,33 @@ workflows:
           echo "Available schemes:"
           xcodebuild -list -workspace "$WORKSPACE"
 
-          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {flag=1; next} flag && NF {print $1; exit}')
+          APP_SCHEME=$(basename "$WORKSPACE" .xcworkspace)
 
-          if [ -z "$SCHEME" ]; then
-            echo "Scheme not detected automatically, using fallback"
-            SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Trying app scheme from workspace name: $APP_SCHEME"
+
+          if ! xcodebuild -list -workspace "$WORKSPACE" | grep -q "$APP_SCHEME"; then
+            echo "Workspace-name scheme not found, detecting non-Pods scheme..."
+            APP_SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '
+              /Schemes:/ {flag=1; next}
+              flag && NF {
+                if ($1 !~ /^Pods/ && $1 !~ /^React/ && $1 !~ /^Expo/) {
+                  print $1
+                  exit
+                }
+              }
+            ')
           fi
 
-          echo "Scheme: $SCHEME"
+          if [ -z "$APP_SCHEME" ]; then
+            echo "ERROR: App scheme not found"
+            exit 1
+          fi
 
-          xcodebuild \
+          echo "Final app scheme: $APP_SCHEME"
+
+          xcodebuild clean build \
             -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
+            -scheme "$APP_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -141,16 +156,27 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
+          echo "Build folder:"
+          find build -maxdepth 6 -type d | head -n 200
+
+          echo "Looking for .app:"
+          find build -name "*.app" -type d
+
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
 
-          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          echo "Searching for .app..."
+          find build -name "*.app" -type d || true
+
+          APP_PATH=$(find build -name "*.app" -type d | grep -v "/Pods" | head -n 1)
 
           echo "APP_PATH=$APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
             echo "ERROR: .app file not found"
+            echo "Full build tree:"
+            find build -maxdepth 8 -type d || true
             exit 1
           fi
 
@@ -163,6 +189,9 @@ workflows:
 
           mkdir -p ../build-output
           cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
+
+          echo "IPA created:"
+          ls -lh ../build-output/
 
     artifacts:
       - frontend/build-output/ipad-youtube-client-unsigned.ipa
