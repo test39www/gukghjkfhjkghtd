@@ -35,6 +35,33 @@ workflows:
           echo "Podfile first lines:"
           head -n 15 ios/Podfile
 
+      - name: Patch old Expo Podfile for Ruby 3.2
+        script: |
+          cd frontend
+
+          ruby - <<'RUBY'
+          podfile = "ios/Podfile"
+
+          patch = <<~'PATCH'
+          # Compatibility patch for old Expo SDK 46 on Ruby 3.2+
+          # Ruby 3.2 removed File.exists?, but old Expo/CocoaPods scripts still call it.
+          class File
+            def self.exists?(path)
+              exist?(path)
+            end
+          end unless File.respond_to?(:exists?)
+          PATCH
+
+          content = File.read(podfile)
+
+          unless content.include?("Compatibility patch for old Expo SDK 46")
+            File.write(podfile, patch + "\n\n" + content)
+          end
+          RUBY
+
+          echo "Patched Podfile:"
+          head -n 30 ios/Podfile
+
       - name: Install CocoaPods
         script: |
           cd frontend/ios
