@@ -25,39 +25,29 @@ workflows:
       - name: Fix node path for Xcode bundle phase
         script: |
           cd frontend
-
-          # The "Bundle React Native code and images" phase runs under a shell
-          # with a restricted PATH and often cannot find node via `command -v`.
-          # Bake the absolute node path into .xcode.env(.local).
           NODE_PATH=$(command -v node)
           echo "Using node at: $NODE_PATH"
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
           echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
-          echo "----- ios/.xcode.env -----"
           cat ios/.xcode.env
 
       - name: Force iOS deployment target 12.4
         script: |
           cd frontend
-
           if grep -q "platform :ios" ios/Podfile; then
             sed -i '' "s/platform :ios.*/platform :ios, '12.4'/" ios/Podfile
           else
             printf "platform :ios, '12.4'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
-
-          echo "Podfile first lines:"
           head -n 20 ios/Podfile
 
       - name: Patch Podfile - folly libc++ fix (Xcode 16)
         script: |
           cd frontend
-
           cat > inject_folly_fix.rb <<'RUBY'
           podfile = "ios/Podfile"
           content = File.read(podfile)
           marker  = "# folly-libcpp-fix"
-
           inject = <<~PATCH
             #{marker}
             installer.pods_project.targets.each do |__t|
@@ -72,7 +62,6 @@ workflows:
               end
             end
           PATCH
-
           if content.include?(marker)
             puts "folly fix already present"
           elsif content =~ /post_install do \|installer\|/
@@ -85,10 +74,7 @@ workflows:
             puts "folly fix appended as new post_install"
           end
           RUBY
-
           ruby inject_folly_fix.rb
-
-          echo "----- Podfile (post_install area) -----"
           grep -n "folly-libcpp-fix\|post_install\|_LIBCPP_ENABLE" ios/Podfile || true
 
       - name: Ruby 3.2 compatibility shim (external, not in Podfile)
@@ -105,13 +91,8 @@ workflows:
       - name: Patch React Native boost podspec
         script: |
           cd frontend
-
           BOOST_PODSPEC="node_modules/react-native/third-party-podspecs/boost.podspec"
-          if [ ! -f "$BOOST_PODSPEC" ]; then
-            echo "ERROR: boost.podspec not found"
-            exit 1
-          fi
-
+          if [ ! -f "$BOOST_PODSPEC" ]; then echo "ERROR: boost.podspec not found"; exit 1; fi
           ruby - <<'RUBY'
           path = "node_modules/react-native/third-party-podspecs/boost.podspec"
           content = File.read(path)
@@ -121,8 +102,6 @@ workflows:
           )
           File.write(path, content)
           RUBY
-
-          echo "Patched boost.podspec:"
           cat "$BOOST_PODSPEC"
 
       - name: Clean CocoaPods boost cache
@@ -139,20 +118,14 @@ workflows:
       - name: Pre-bundle JS (diagnostic, real Metro errors surface here)
         script: |
           cd frontend
-
-          # Detect the JS entry file the same way Metro does (package.json main).
           ENTRY=$(node -e "console.log(require('./package.json').main || 'index.js')")
           echo "Entry file: $ENTRY"
-
-          # Build the JS bundle standalone so any JS/Metro error is shown clearly
-          # (instead of being buried inside the Xcode script phase log).
           npx react-native bundle \
             --platform ios \
             --dev false \
             --entry-file "$ENTRY" \
             --bundle-output ios/main.jsbundle \
             --assets-dest ios/assets
-
           echo "JS bundle built OK:"
           ls -lh ios/main.jsbundle
 
@@ -160,15 +133,12 @@ workflows:
         script: |
           cd frontend/ios
           set -e
-
           export NODE_BINARY="$(command -v node)"
           echo "NODE_BINARY=$NODE_BINARY"
 
           WORKSPACE=$(find . -maxdepth 1 -type d -name "*.xcworkspace" | head -n 1)
           if [ -z "$WORKSPACE" ]; then echo "ERROR: .xcworkspace not found"; exit 1; fi
           echo "Workspace: $WORKSPACE"
-
-          echo "Available schemes:"
           xcodebuild -list -workspace "$WORKSPACE"
 
           APP_SCHEME=$(basename "$WORKSPACE" .xcworkspace)
@@ -197,10 +167,9 @@ workflows:
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-          echo "===== Products dir ====="
           ls -la build/Build/Products/Release-iphoneos/ || true
 
-      - name: Create unsigned IPA
+      - name: Ad-hoc sign and create IPA (for jailbroken + AppSync)
         script: |
           cd frontend/ios
           set -e
@@ -208,34 +177,63 @@ workflows:
           PRODUCTS_DIR="build/Build/Products/Release-iphoneos"
           APP_PATH=$(find "$PRODUCTS_DIR" -maxdepth 1 -name "*.app" -type d | head -n 1)
           echo "APP_PATH=$APP_PATH"
-
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: real .app not found in products dir"
+            echo "ERROR: real .app not found"
             find build -name "*.app" -type d -exec du -sh {} \; || true
             exit 1
           fi
 
           APP_NAME=$(basename "$APP_PATH" .app)
           BIN="$APP_PATH/$APP_NAME"
-          echo "App size:"; du -sh "$APP_PATH"
-          echo "Contents:"; ls -la "$APP_PATH"
-
-          if [ ! -f "$BIN" ]; then
-            echo "ERROR: executable '$BIN' missing -> empty app"
-            exit 1
-          fi
+          du -sh "$APP_PATH"; ls -la "$APP_PATH"
+          if [ ! -f "$BIN" ]; then echo "ERROR: executable missing -> empty app"; exit 1; fi
           file "$BIN"
-
           APP_BYTES=$(du -sk "$APP_PATH" | cut -f1)
-          if [ "$APP_BYTES" -lt 1000 ]; then
-            echo "ERROR: app is only ${APP_BYTES}KB -> not a real build"
-            exit 1
+          if [ "$APP_BYTES" -lt 1000 ]; then echo "ERROR: app only ${APP_BYTES}KB"; exit 1; fi
+
+          # ---- Ad-hoc (fake) signature with entitlements ----
+          # installd on jailbroken devices (even with AppSync) rejects a bundle
+          # with NO signature: "missing application-identifier entitlement".
+          # An ad-hoc signature carrying application-identifier fixes that.
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist")
+          echo "Bundle ID: $BUNDLE_ID"
+
+          cat > entitlements.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>application-identifier</key>
+            <string>$BUNDLE_ID</string>
+            <key>get-task-allow</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          # Sign nested code first (frameworks / dylibs / plugins), then the app.
+          if [ -d "$APP_PATH/Frameworks" ]; then
+            find "$APP_PATH/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) | while read -r f; do
+              echo "Signing nested: $f"
+              codesign --force --sign - "$f" || true
+            done
+          fi
+          if [ -d "$APP_PATH/PlugIns" ]; then
+            find "$APP_PATH/PlugIns" -maxdepth 1 -name "*.appex" | while read -r p; do
+              codesign --force --sign - --entitlements entitlements.plist "$p" || true
+            done
           fi
 
+          codesign --force --sign - --entitlements entitlements.plist "$APP_PATH"
+
+          echo "----- verifying entitlements -----"
+          codesign -d --entitlements - "$APP_PATH" || true
+
+          # ---- Package IPA ----
           rm -rf Payload unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -r unsigned.ipa Payload >/dev/null
+          zip -qr unsigned.ipa Payload
 
           mkdir -p ../build-output
           cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
