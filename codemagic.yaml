@@ -1,0 +1,51 @@
+workflows:
+  ios-unsigned:
+    name: Build iOS IPA unsigned
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      node: 20
+      xcode: latest
+      cocoapods: default
+
+    scripts:
+      - name: Install dependencies
+        script: |
+          npm install
+
+      - name: Generate iOS project
+        script: |
+          npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        script: |
+          cd ios
+          pod install
+
+      - name: Build unsigned iOS app
+        script: |
+          cd ios
+          WORKSPACE=$(ls *.xcworkspace | head -n 1)
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {getline; print $1}')
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Create unsigned IPA
+        script: |
+          cd ios
+          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r unsigned.ipa Payload
+
+    artifacts:
+      - ios/unsigned.ipa
+      - ios/build/Build/Products/Release-iphoneos/*.app
