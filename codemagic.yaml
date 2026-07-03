@@ -115,6 +115,28 @@ workflows:
           cd frontend/ios
           RUBYOPT="-r$(pwd)/podfile_patch.rb" pod install --repo-update
 
+      - name: Weak-link SwiftUI/Combine for iOS 12 (fix dyld launch crash)
+        script: |
+          cd frontend/ios
+          set -e
+          # expo-modules-core imports SwiftUI; static linking makes it a HARD
+          # dependency in the main binary -> dyld crash on iOS 12 (no SwiftUI).
+          # Make it weak so the app launches; SwiftUI code is @available-guarded.
+          FOUND=0
+          find "Pods/Target Support Files" -name "Pods-*.xcconfig" | while read -r f; do
+            echo "Patching OTHER_LDFLAGS in: $f"
+            if grep -q '^OTHER_LDFLAGS' "$f"; then
+              sed -i '' 's|^OTHER_LDFLAGS = .*|& -weak_framework "SwiftUI" -weak_framework "Combine"|' "$f"
+            else
+              echo 'OTHER_LDFLAGS = $(inherited) -weak_framework "SwiftUI" -weak_framework "Combine"' >> "$f"
+            fi
+            grep -n '^OTHER_LDFLAGS' "$f" || true
+          done
+          # sanity check that at least one aggregate xcconfig exists
+          if ! find "Pods/Target Support Files" -name "Pods-*.xcconfig" | grep -q .; then
+            echo "WARNING: no Pods-*.xcconfig found to patch"
+          fi
+
       - name: Pre-bundle JS (diagnostic, real Metro errors surface here)
         script: |
           cd frontend
@@ -188,13 +210,15 @@ workflows:
           du -sh "$APP_PATH"; ls -la "$APP_PATH"
           if [ ! -f "$BIN" ]; then echo "ERROR: executable missing -> empty app"; exit 1; fi
           file "$BIN"
+
+          # confirm SwiftUI is now weak (LC_LOAD_WEAK_DYLIB), not a hard dep
+          echo "----- SwiftUI load command in binary -----"
+          otool -l "$BIN" | grep -A2 -i swiftui || echo "(SwiftUI not referenced)"
+
           APP_BYTES=$(du -sk "$APP_PATH" | cut -f1)
           if [ "$APP_BYTES" -lt 1000 ]; then echo "ERROR: app only ${APP_BYTES}KB"; exit 1; fi
 
           # ---- Ad-hoc (fake) signature with entitlements ----
-          # installd on jailbroken devices (even with AppSync) rejects a bundle
-          # with NO signature: "missing application-identifier entitlement".
-          # An ad-hoc signature carrying application-identifier fixes that.
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Info.plist")
           echo "Bundle ID: $BUNDLE_ID"
 
@@ -211,7 +235,6 @@ workflows:
           </plist>
           PLIST
 
-          # Sign nested code first (frameworks / dylibs / plugins), then the app.
           if [ -d "$APP_PATH/Frameworks" ]; then
             find "$APP_PATH/Frameworks" -maxdepth 1 \( -name "*.framework" -o -name "*.dylib" \) | while read -r f; do
               echo "Signing nested: $f"
@@ -225,11 +248,9 @@ workflows:
           fi
 
           codesign --force --sign - --entitlements entitlements.plist "$APP_PATH"
-
           echo "----- verifying entitlements -----"
           codesign -d --entitlements - "$APP_PATH" || true
 
-          # ---- Package IPA ----
           rm -rf Payload unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
@@ -237,7 +258,6 @@ workflows:
 
           mkdir -p ../build-output
           cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
-
           echo "===== Final IPA ====="
           ls -lh ../build-output/ unsigned.ipa
 
