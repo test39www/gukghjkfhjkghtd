@@ -38,11 +38,6 @@ workflows:
       - name: Ruby 3.2 compatibility shim (external, not in Podfile)
         script: |
           cd frontend/ios
-
-          # IMPORTANT: do NOT inject `class File` into the Podfile itself.
-          # The Podfile is eval'd inside the Pod::Podfile namespace, so `class File`
-          # there creates Pod::Podfile::File and breaks File.dirname on the
-          # autolinking require line. Load the shim externally via RUBYOPT instead.
           cat > podfile_patch.rb <<'RUBY'
           class File
             def self.exists?(path)
@@ -56,7 +51,6 @@ workflows:
           cd frontend
 
           BOOST_PODSPEC="node_modules/react-native/third-party-podspecs/boost.podspec"
-
           if [ ! -f "$BOOST_PODSPEC" ]; then
             echo "ERROR: boost.podspec not found"
             exit 1
@@ -89,77 +83,91 @@ workflows:
       - name: Build unsigned iOS app
         script: |
           cd frontend/ios
+          set -e
 
           WORKSPACE=$(find . -maxdepth 1 -type d -name "*.xcworkspace" | head -n 1)
-          if [ -z "$WORKSPACE" ]; then
-            echo "ERROR: .xcworkspace not found"
-            exit 1
-          fi
+          if [ -z "$WORKSPACE" ]; then echo "ERROR: .xcworkspace not found"; exit 1; fi
           echo "Workspace: $WORKSPACE"
 
           echo "Available schemes:"
           xcodebuild -list -workspace "$WORKSPACE"
 
           APP_SCHEME=$(basename "$WORKSPACE" .xcworkspace)
-          if ! xcodebuild -list -workspace "$WORKSPACE" | grep -q "$APP_SCHEME"; then
-            echo "Workspace-name scheme not found, detecting non-Pods scheme..."
+          if ! xcodebuild -list -workspace "$WORKSPACE" | grep -qx "        $APP_SCHEME"; then
             APP_SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '
               /Schemes:/ {flag=1; next}
               flag && NF {
-                if ($1 !~ /^Pods/ && $1 !~ /^React/ && $1 !~ /^Expo/) { print $1; exit }
+                gsub(/^ +/,"");
+                if ($0 !~ /^Pods/ && $0 !~ /^React/ && $0 !~ /^Expo/ && $0 !~ /^RN/ && $0 !~ /^RCT/) { print; exit }
               }')
           fi
-          if [ -z "$APP_SCHEME" ]; then
-            echo "ERROR: App scheme not found"
-            exit 1
-          fi
+          if [ -z "$APP_SCHEME" ]; then echo "ERROR: App scheme not found"; exit 1; fi
           echo "App scheme: $APP_SCHEME"
 
-          # Use plain `build` (NOT `archive`): an unsigned IPA does not need an
-          # .xcarchive, and archive rebuilds with settings that break RCT-Folly.
-          # CLANG_CXX_LANGUAGE_STANDARD=c++17 fixes RCT-Folly json.cpp on Xcode 16
-          # (c++20 removed std::char_traits<unsigned char>).
+          # Plain build (NOT archive). c++17 fixes RCT-Folly json.cpp on Xcode 16.
           xcodebuild clean build \
             -workspace "$WORKSPACE" \
             -scheme "$APP_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             IPHONEOS_DEPLOYMENT_TARGET=12.4 \
             CLANG_CXX_LANGUAGE_STANDARD=c++17 \
+            ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-          echo "Looking for .app:"
-          find build -name "*.app" -type d
+          echo "===== Products dir ====="
+          ls -la build/Build/Products/Release-iphoneos/ || true
 
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
+          set -e
 
-          APP_PATH=$(find build -name "*.app" -type d | grep -v "/Pods" | head -n 1)
+          PRODUCTS_DIR="build/Build/Products/Release-iphoneos"
+          APP_PATH=$(find "$PRODUCTS_DIR" -maxdepth 1 -name "*.app" -type d | head -n 1)
           echo "APP_PATH=$APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: .app file not found"
-            find build -maxdepth 8 -type d || true
+            echo "ERROR: real .app not found in products dir"
+            echo "----- full build tree (.app dirs) -----"
+            find build -name "*.app" -type d -exec du -sh {} \; || true
             exit 1
           fi
 
-          rm -rf Payload
+          # Sanity check: the .app MUST contain a Mach-O executable.
+          APP_NAME=$(basename "$APP_PATH" .app)
+          BIN="$APP_PATH/$APP_NAME"
+          echo "App size:"; du -sh "$APP_PATH"
+          echo "Contents:"; ls -la "$APP_PATH"
+
+          if [ ! -f "$BIN" ]; then
+            echo "ERROR: executable '$BIN' missing -> build produced an empty app"
+            exit 1
+          fi
+          file "$BIN"
+
+          APP_BYTES=$(du -sk "$APP_PATH" | cut -f1)
+          if [ "$APP_BYTES" -lt 1000 ]; then
+            echo "ERROR: app is only ${APP_BYTES}KB -> not a real build"
+            exit 1
+          fi
+
+          rm -rf Payload unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -r unsigned.ipa Payload
+          zip -r unsigned.ipa Payload >/dev/null
 
           mkdir -p ../build-output
           cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
 
-          echo "IPA created:"
-          ls -lh ../build-output/
+          echo "===== Final IPA ====="
+          ls -lh ../build-output/ unsigned.ipa
 
     artifacts:
       - frontend/build-output/ipad-youtube-client-unsigned.ipa
       - frontend/ios/unsigned.ipa
-      - frontend/ios/build/Build/Products/Release-iphoneos/*.app
