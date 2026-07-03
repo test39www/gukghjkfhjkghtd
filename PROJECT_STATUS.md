@@ -1,96 +1,78 @@
 # PROJECT STATUS
 
-## Что исправлено / улучшено (текущая итерация)
-1. **iOS HTTP-доступ (ATS).** В `frontend/app.json` добавлен
-   `ios.infoPlist.NSAppTransportSecurity.NSAllowsArbitraryLoads = true` —
-   приложение теперь может ходить на локальный backend по http://.
-2. **Зафиксированы зависимости.** Убраны `^`/`~`, все версии точные;
-   добавлен `engines.node`. Expo остаётся SDK 46, RN — 0.69.6.
-3. **Разделены метаданные и поток.** `/api/video/:id` отдаёт только
-   метаданные, `streamUrl` переехал в `/api/stream/:id`. VideoScreen
-   сначала грузит видео, потом отдельно getStream(id); ошибки потока
-   и неподдерживаемый формат показываются без краша.
-4. **Абстракция источника данных.** Добавлен интерфейс `VideoProvider`,
-   реализации `MockVideoProvider` и `RealVideoProvider` (заглушка).
-   Переключение через `DATA_SOURCE` без правки routes.
-5. **Пагинация поиска.** `/api/search` принимает `page` и `limit`,
-   ответ: `{ query, page, limit, total, hasMore, results }`. На frontend —
-   кнопка «Загрузить ещё».
-6. **Экран канала.** Добавлен тип `Channel`, `getChannel(id)`, `ChannelScreen`
-   (название, описание, подписчики, список видео), кнопки открытия
-   канала в VideoScreen и VideoInfoScreen, маршрут `Channel` в навигации.
-7. **Валидация backend URL.** В SettingsScreen: не сохраняет пустой URL,
-   требует http:// или https://, убирает `/` в конце, показывает понятную ошибку.
-8. **README** обновлён: точные шаги prebuild → pod install → Xcode → IPA →
-   AppSync/Filza, предупреждение про Expo Go и iOS 12.
+## Итерация 3: Рекомендации, реальный поиск, аккаунт, настройки ✅
 
-## Какие файлы изменены / добавлены
+Эта итерация закрывает четыре задачи: **рекомендации**, **рабочий поиск**,
+**вход в аккаунт** и **доработка настроек**.
+
+### 1. Рекомендации (главный экран)
+- Новый `HomeScreen` — лента трендов по региону + секция «Из ваших подписок».
+- Pull-to-refresh, поисковая строка сверху.
+- Backend: `GET /api/trending` + `getTrending` в обоих провайдерах.
+- Backend: `GET /api/related/:id` + `getRelated`; похожие видео на экране видео.
+
+### 2. Рабочий поиск (реальные данные)
+- Полностью реализован `RealVideoProvider` поверх Invidious (подход youthub):
+  поиск, видео, канал, поток, тренды, похожие — без официального YouTube API.
+- Мульти-инстанс с fallback и таймаутом; выбор mp4 H.264/AAC (itag 22→18) для iOS 12.
+- Поиск работает как в mock, так и в real режиме; пагинация, лимит по умолчанию 10.
+
+### 3. Вход в аккаунт (локальный)
+- `AuthContext` + `useAuth`, хранилище аккаунтов в AsyncStorage (хеш пароля djb2).
+- `AccountScreen`: регистрация/вход/выход, профиль со статистикой.
+- Данные (история/избранное/подписки) намеспейсятся по аккаунту; гостевой режим.
+- Без Google/сервера и без передачи данных наружу.
+
+### 4. Доработаны настройки
+- Backend URL (проверка через /health с показом режима/региона, сброс).
+- Регион трендов (сохраняется, влияет на главный экран).
+- Очистка истории/избранного/подписок с подтверждением.
+- Блок «О приложении» (версия, платформа, стек, источник данных).
+
+### Навигация
+Вкладки: **Главная** (рекомендации), **Поиск**, **Избранное**, **История**,
+**Аккаунт**, **Настройки**. App обёрнут в `AuthProvider`.
+
+### Файлы этой итерации
 **Backend**
-- изменён: `src/types/index.ts` (VideoDetails без streamUrl, добавлен SearchResult)
-- изменён: `src/services/youtubeService.ts` (теперь фасад над провайдером)
-- изменён: `src/routes/index.ts` (page/limit в /search)
-- изменён: `package.json` (точные версии, engines)
-- добавлено: `src/services/providers/VideoProvider.ts`
-- добавлено: `src/services/providers/MockVideoProvider.ts`
-- добавлено: `src/services/providers/RealVideoProvider.ts`
+- изменён: `src/services/providers/VideoProvider.ts` (+getTrending/+getRelated)
+- изменён: `src/services/providers/MockVideoProvider.ts` (+getTrending/+getRelated)
+- переписан: `src/services/providers/RealVideoProvider.ts` (Invidious)
+- изменён: `src/services/youtubeService.ts` (фасад +getTrending/+getRelated)
+- изменён: `src/routes/index.ts` (+/trending, +/related, region в /health)
+- добавлен: `.env.example`
 
 **Frontend**
-- изменён: `app.json` (ATS)
-- изменён: `package.json` (точные версии, engines)
-- изменён: `src/types/index.ts` (Channel, SearchResponse, VideoDetails без streamUrl)
-- изменён: `src/api/youtube.ts` (getStream/getChannel, page/limit)
-- изменён: `src/screens/VideoScreen.tsx` (getVideo + getStream, кнопка канала)
-- изменён: `src/screens/VideoInfoScreen.tsx` (кнопка канала)
-- изменён: `src/screens/ResultsScreen.tsx` (пагинация + «Загрузить ещё»)
-- изменён: `src/screens/SettingsScreen.tsx` (валидация URL)
-- изменён: `src/navigation/index.tsx` (маршрут Channel)
-- добавлено: `src/screens/ChannelScreen.tsx`
+- добавлен: `src/screens/HomeScreen.tsx` (рекомендации)
+- добавлен: `src/screens/AccountScreen.tsx` (вход/регистрация/профиль)
+- добавлен: `src/context/AuthContext.tsx`
+- переписан: `src/storage/index.ts` (аккаунты, подписки, регион, namespacing)
+- переписан: `src/screens/SettingsScreen.tsx` (регион, очистка, about)
+- изменён: `src/screens/VideoScreen.tsx` (похожие видео + подписка)
+- изменён: `src/screens/ChannelScreen.tsx` (кнопка подписки)
+- изменён: `src/screens/ResultsScreen.tsx` (лимит 10, push)
+- изменён: `src/navigation/index.tsx` (вкладки Home и Account)
+- изменён: `src/api/youtube.ts` (getTrending, getRelated, region)
+- изменён: `src/types/index.ts` (Subscription, Account)
+- изменён: `App.tsx` (AuthProvider)
 
 **Корень**
 - изменён: `README.md`, `PROJECT_STATUS.md`
 
-## Что теперь работает
-- Backend: mock-данные, пагинация поиска, отдельные эндпоинты video/stream/channel.
-- Frontend: поиск с кнопкой «Загрузить ещё», просмотр видео с раздельной
-  загрузкой потока, экран канала, избранное, история, настройки с валидацией.
-- Корректная обработка ошибок сети и воспроизведения.
-
-## Что ещё не реализовано
-- Реальный легальный источник данных (RealVideoProvider — заглушка).
-- Автотесты.
-- Полноценная сборка .ipa под iOS 12 (требует macOS + Xcode).
-- Кэш/инвалидация истории и избранного сверх базового лимита.
-
-## Проверки (инварианты)
-- Expo Router НЕ используется (только React Navigation v6).
+### Проверки (инварианты)
+- Expo Router НЕ используется (только React Navigation v6, т.к. несовместим с SDK 46).
 - Нет библиотек, требующих iOS 13+.
 - Официальный YouTube API / обход DRM НЕ используются.
+- Все .ts/.tsx проходят синтаксическую проверку (transpileModule).
 
-## Этап MVP: ЗАВЕРШЁН + ДОРАБОТАН ✅
-Следующий этап: подключение реального легального источника через RealVideoProvider.
+### Ограничения
+- Полная проверка типов (tsc) требует `npm install` (сеть недоступна в текущей среде).
+- Стабильность real-режима зависит от доступности Invidious-инстансов; лучше свой инстанс.
+- Пароль аккаунта — простой хеш (не криптостойкий); это локальный профиль, не безопасность.
 
 ---
 
-## Итерация 2: Подготовка frontend к сборке через GitHub Actions (macOS runner)
-
-### Что добавлено
-- **`.github/workflows/ios-build.yml`** — CI-workflow на `macos-13`:
-  Xcode 14.3.1 + Node 18 → `npm install` → `expo prebuild` → фиксация
-  iOS target 12.0 → `pod install` → сборка неподписанного IPA → upload artifact.
-  Запуск: push в main (при изменении frontend/**) или вручную (workflow_dispatch).
-- **`frontend/scripts/ci-build-ipa.sh`** — скрипт сборки: автоопределение
-  workspace/scheme, `xcodebuild` без подписи (`CODE_SIGNING_ALLOWED=NO`),
-  упаковка `.app` в `Payload/...ipa`.
-
-### Что изменено
-- **`.gitignore`** — добавлены `build/` и `*.ipa` (артефакты CI).
-- **`README.md`** — раздел 14 «Сборка через GitHub Actions (macOS runner)».
-
-### Почему неподписанный IPA
-Целевое устройство — jailbroken iPad с AppSync, который ставит неподписанные
-IPA. Это убирает необходимость в Apple Developer сертификатах и GitHub-секретах.
-
-### Ограничения
-- Сборку нельзя проверить в текущей offline-среде (нет macOS/Xcode);
-  workflow и скрипт проверены на валидность YAML и синтаксис bash.
-- Неподписанный IPA ставится только на jailbroken-устройство.
+## Итерации 1–2 (ранее)
+Базовый MVP (mock, пагинация, разделение video/stream, канал, ATS, точные
+версии зависимостей) и подготовка CI (GitHub Actions, macOS, неподписанный IPA).
+См. историю в README (разделы 7–14).

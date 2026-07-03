@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react"
 import {
-  ScrollView,
+  FlatList,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -10,9 +10,16 @@ import { ResizeMode, Video } from "expo-av"
 import { RouteProp, useNavigation, useRoute } from "@react-navigation/native"
 import { NativeStackNavigationProp } from "@react-navigation/native-stack"
 import { RootStackParamList } from "../navigation"
-import { StreamInfo, VideoDetails } from "../types"
-import { getStream, getVideo } from "../api/youtube"
-import { addToHistory, isFavorite, toggleFavorite } from "../storage"
+import { StreamInfo, VideoDetails, VideoSummary } from "../types"
+import { getRelated, getStream, getVideo } from "../api/youtube"
+import {
+  addToHistory,
+  isFavorite,
+  isSubscribed,
+  toggleFavorite,
+  toggleSubscription,
+} from "../storage"
+import { VideoCard } from "../components/VideoCard"
 import { Loading } from "../components/Loading"
 import { ErrorView } from "../components/ErrorView"
 import { theme } from "../theme"
@@ -27,10 +34,12 @@ export function VideoScreen() {
 
   const [details, setDetails] = useState<VideoDetails | null>(null)
   const [stream, setStream] = useState<StreamInfo | null>(null)
+  const [related, setRelated] = useState<VideoSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [playbackError, setPlaybackError] = useState<string | null>(null)
   const [fav, setFav] = useState(false)
+  const [subscribed, setSubscribed] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -42,17 +51,27 @@ export function VideoScreen() {
       setDetails(data)
       await addToHistory(summary)
       setFav(await isFavorite(summary.id))
+      setSubscribed(await isSubscribed(summary.channelId))
 
       // 2) Потом отдельно — ссылка на воспроизведение.
       // Ошибка потока не должна ломать экран с метаданными.
       try {
         const s = await getStream(summary.id)
         setStream(s)
+        if (!s.streamUrl) setPlaybackError(s.note)
       } catch {
         setStream(null)
         setPlaybackError(
           "Не удалось получить ссылку на воспроизведение с сервера."
         )
+      }
+
+      // 3) Похожие видео — необязательно, ошибку молча игнорируем.
+      try {
+        const r = await getRelated(summary.id, 12)
+        setRelated(r.results)
+      } catch {
+        setRelated([])
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Неизвестная ошибка")
@@ -66,6 +85,14 @@ export function VideoScreen() {
   }, [load])
 
   const onToggleFav = async () => setFav(await toggleFavorite(summary))
+  const onToggleSub = async () =>
+    setSubscribed(
+      await toggleSubscription({
+        channelId: summary.channelId,
+        channelTitle: summary.channelTitle,
+        thumbnail: summary.thumbnail,
+      })
+    )
   const openChannel = () =>
     navigation.navigate("Channel", {
       channelId: summary.channelId,
@@ -78,8 +105,8 @@ export function VideoScreen() {
 
   const canPlay = Boolean(stream?.streamUrl) && !playbackError
 
-  return (
-    <ScrollView style={styles.container}>
+  const header = (
+    <View>
       {canPlay ? (
         <Video
           style={styles.video}
@@ -114,8 +141,18 @@ export function VideoScreen() {
               {fav ? "★ В избранном" : "☆ В избранное"}
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.actionBtn} onPress={openChannel}>
-            <Text style={styles.actionText}>Канал</Text>
+          <TouchableOpacity
+            style={[styles.actionBtn, subscribed && styles.actionBtnActive]}
+            onPress={onToggleSub}
+          >
+            <Text
+              style={[
+                styles.actionText,
+                subscribed && styles.actionTextActive,
+              ]}
+            >
+              {subscribed ? "✓ Подписан" : "+ Подписаться"}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.actionBtn}
@@ -128,8 +165,30 @@ export function VideoScreen() {
         <Text style={styles.description} numberOfLines={4}>
           {details.description}
         </Text>
+
+        {related.length > 0 ? (
+          <Text style={styles.sectionTitle}>Похожие видео</Text>
+        ) : null}
       </View>
-    </ScrollView>
+    </View>
+  )
+
+  return (
+    <FlatList
+      style={styles.container}
+      data={related}
+      keyExtractor={(item, i) => `${item.id}-${i}`}
+      ListHeaderComponent={header}
+      contentContainerStyle={ { paddingHorizontal: 16, paddingBottom: 24 } }
+      renderItem={({ item }) => (
+        <VideoCard
+          video={item}
+          onPress={() =>
+            navigation.push("Video", { video: item })
+          }
+        />
+      )}
+    />
   )
 }
 
@@ -145,7 +204,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   fallbackText: { color: theme.colors.danger, textAlign: "center" },
-  body: { padding: 16 },
+  body: { paddingVertical: 16 },
   title: { color: theme.colors.text, fontSize: 18, fontWeight: "700" },
   channelLink: { color: theme.colors.accent, marginTop: 6, fontWeight: "600" },
   sub: { color: theme.colors.textSecondary, marginTop: 4 },
@@ -158,6 +217,15 @@ const styles = StyleSheet.create({
     marginRight: 10,
     marginBottom: 10,
   },
+  actionBtnActive: { backgroundColor: theme.colors.accent },
   actionText: { color: theme.colors.text, fontWeight: "600" },
+  actionTextActive: { color: "#fff" },
   description: { color: theme.colors.textSecondary, marginTop: 6, lineHeight: 20 },
+  sectionTitle: {
+    color: theme.colors.text,
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 20,
+    marginBottom: 4,
+  },
 })

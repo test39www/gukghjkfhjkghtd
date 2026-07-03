@@ -39,3 +39,16 @@ export interface SearchResponse {
   hasMore: boolean
   results: VideoSummary[]
 }
+
+// Подписка на канал (хранится локально под аккаунтом).
+export interface Subscription {
+  channelId: string
+  channelTitle: string
+  thumbnail: string
+}
+
+// Локальный аккаунт (без пароля в открытом виде).
+export interface Account {
+  username: string
+  createdAt: string
+}

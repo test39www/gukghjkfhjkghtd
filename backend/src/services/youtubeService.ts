@@ -1,4 +1,10 @@
-import { Channel, SearchResult, StreamInfo, VideoDetails } from "../types"
+import {
+  Channel,
+  SearchResult,
+  StreamInfo,
+  VideoDetails,
+  VideoSummary,
+} from "../types"
 import { MockVideoProvider } from "./providers/MockVideoProvider"
 import { RealVideoProvider } from "./providers/RealVideoProvider"
 import { VideoProvider } from "./providers/VideoProvider"
@@ -29,3 +35,14 @@ export const getChannel = (id: string): Promise<Channel | null> =>
 
 export const getStream = (id: string): Promise<StreamInfo | null> =>
   provider.getStream(id)
+
+export const getTrending = (
+  region: string,
+  page: number,
+  limit: number
+): Promise<VideoSummary[]> => provider.getTrending(region, page, limit)
+
+export const getRelated = (
+  id: string,
+  limit: number
+): Promise<VideoSummary[]> => provider.getRelated(id, limit)

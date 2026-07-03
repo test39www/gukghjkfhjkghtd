@@ -9,16 +9,30 @@
 контента, авторизации Google и защит YouTube. По умолчанию включён mock-режим.
 
 ## 2. Архитектура API
-- `GET /api/health` — статус сервера и текущий режим (mock/real).
+- `GET /api/health` — статус сервера, режим (mock/real) и регион.
 - `GET /api/search?q=&page=&limit=` — пагинированный поиск.
   Ответ: `{ query, page, limit, total, hasMore, results }`.
+- `GET /api/trending?region=&page=&limit=` — рекомендации/тренды (главный экран).
+- `GET /api/related/:id?limit=` — похожие видео.
 - `GET /api/video/:id` — только **метаданные** видео (без streamUrl).
 - `GET /api/stream/:id` — **ссылка на воспроизведение** (`{ id, streamUrl, mimeType, note }`).
 - `GET /api/channel/:id` — канал с описанием, подписчиками и списком видео.
 
 Источник данных абстрагирован через интерфейс `VideoProvider`
-(`MockVideoProvider` по умолчанию, `RealVideoProvider` — заглушка). Переключение
-через `DATA_SOURCE=mock|real` без правки routes.
+(`MockVideoProvider` — тестовые данные, `RealVideoProvider` — реальный YouTube
+через Invidious, подход youthub). Переключение через `DATA_SOURCE=mock|real`
+без правки routes.
+
+## 2.1. Возможности приложения
+- **Рекомендации** — главный экран `Home` c трендами по региону и лентой
+  «Из ваших подписок».
+- **Рабочий поиск** — вкладка `Search` + поиск с главного экрана, пагинация.
+- **Вход в аккаунт** — локальные профили на устройстве (регистрация/вход/выход,
+  без Google/сервера). История, избранное и подписки хранятся отдельно для
+  каждого профиля; без входа работает гостевой режим.
+- **Подписки** — кнопка «Подписаться» на экранах видео и канала.
+- **Настройки** — backend URL (проверка/сброс), регион трендов, очистка
+  истории/избранного/подписок, информация о приложении.
 
 ## 3. Почему для iOS 12 нельзя использовать новые версии Expo
 - Expo SDK 46 — последняя версия с официальной поддержкой iOS 12.
@@ -129,12 +143,27 @@ pod install
 - React: 18.0.0
 - React Navigation: 6.x (Expo Router НЕ используется)
 
-## 13. Где подключить свой легальный источник данных
-Реализуйте `backend/src/services/providers/RealVideoProvider.ts` и запустите с
-`DATA_SOURCE=real`. Методы `searchVideos/getVideo/getChannel/getStream` должны
-брать данные из вашего легального источника (self-hosted Piped/Invidious,
-собственный медиасервер или лицензированный провайдер), отдавая H.264/AAC
-mp4 или HLS. Routes менять не нужно.
+## 13. Реальный источник данных (Invidious / подход youthub)
+`RealVideoProvider` уже реализован поверх открытого API Invidious
+(`/api/v1/search`, `/videos/:id`, `/channels/:id`, `/trending`). Он не использует
+официальный YouTube API и не требует ключей/авторизации Google, а из
+`formatStreams` выбирает смуксированный mp4 (H.264/AAC, itag 22→18) —
+совместимый с AVPlayer на iOS 12.
+
+Включение реального режима:
+```bash
+cd backend
+cp .env.example .env
+# в .env:
+#   DATA_SOURCE=real
+#   INVIDIOUS_INSTANCES=https://инстанс1,https://инстанс2
+#   YT_REGION=US
+npm run dev
+```
+Задаётся список инстансов через запятую (первый ответивший побеждает, остальные —
+fallback). Актуальные инстансы: https://docs.invidious.io/instances/.
+Рекомендуется поднять собственный инстанс для стабильности и легальности.
+Routes менять не нужно.
 
 ## 14. Сборка через GitHub Actions (macOS runner)
 В репозитории есть готовый workflow `.github/workflows/ios-build.yml`, который

@@ -195,4 +195,27 @@ export class MockVideoProvider implements VideoProvider {
       note: "MOCK: публичный тестовый mp4 (H.264/AAC), совместим с iOS 12.",
     }
   }
+
+  // Рекомендации: в mock-режиме — все видео, отсортированные по просмотрам.
+  async getTrending(
+    _region: string,
+    page: number,
+    limit: number
+  ): Promise<VideoSummary[]> {
+    const all = MOCK_VIDEOS.map(toSummary).sort((a, b) => b.views - a.views)
+    const safePage = page < 1 ? 1 : page
+    const safeLimit = limit < 1 ? 1 : limit
+    const start = (safePage - 1) * safeLimit
+    return all.slice(start, start + safeLimit)
+  }
+
+  // Похожие: сначала видео того же канала, потом остальные.
+  async getRelated(id: string, limit: number): Promise<VideoSummary[]> {
+    const current = MOCK_VIDEOS.find((v) => v.id === id)
+    const others = MOCK_VIDEOS.filter((v) => v.id !== id).map(toSummary)
+    if (!current) return others.slice(0, limit)
+    const sameChannel = others.filter((v) => v.channelId === current.channelId)
+    const rest = others.filter((v) => v.channelId !== current.channelId)
+    return [...sameChannel, ...rest].slice(0, limit)
+  }
 }
