@@ -6,12 +6,8 @@ workflows:
 
     environment:
       node: 18
-      # RN 0.69.6 / Expo SDK 46 do NOT build on Xcode 16 (C++ / codegen breakage).
-      # Pin to a 2022-era Xcode that matches the project.
-      xcode: 14.3
-      # New CocoaPods breaks RN 0.69 codegen (use_react_native_codegen! wrong number
-      # of arguments). Pin to the version contemporary with RN 0.69.
-      cocoapods: 1.11.3
+      xcode: 16.0
+      cocoapods: default
 
     scripts:
       - name: Install dependencies
@@ -37,31 +33,38 @@ workflows:
           fi
 
           echo "Podfile first lines:"
-          head -n 15 ios/Podfile
+          head -n 20 ios/Podfile
 
-      - name: Ruby 3.2 compatibility shim (external, not in Podfile)
+      - name: Patch old Expo SDK 46 for new Ruby
         script: |
-          cd frontend/ios
+          cd frontend
 
-          # Ruby 3.2 removed File.exists?; old Expo SDK 46 / CocoaPods scripts still call it.
-          # IMPORTANT: this must NOT be injected into the Podfile itself, because the Podfile
-          # is eval'd inside the Pod::Podfile namespace, so `class File` there would create
-          # Pod::Podfile::File and break File.dirname on the autolinking require line.
-          cat > podfile_patch.rb <<'RUBY'
+          ruby - <<'RUBY'
+          podfile = "ios/Podfile"
+
+          patch = <<~'PATCH'
+          # Compatibility patch for old Expo SDK 46 on Ruby 3.2+
           class File
             def self.exists?(path)
               exist?(path)
             end
           end unless File.respond_to?(:exists?)
+          PATCH
+
+          content = File.read(podfile)
+
+          unless content.include?("Compatibility patch for old Expo SDK 46")
+            File.write(podfile, patch + "\n\n" + content)
+          end
           RUBY
 
-          echo "Podfile first lines:"
-          head -n 15 Podfile
+          echo "Patched Podfile:"
+          head -n 35 ios/Podfile
 
       - name: Install CocoaPods
         script: |
           cd frontend/ios
-          RUBYOPT="-r$(pwd)/podfile_patch.rb" pod install --repo-update
+          pod install --repo-update
 
       - name: Build unsigned iOS app
         script: |
