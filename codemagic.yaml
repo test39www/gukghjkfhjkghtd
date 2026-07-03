@@ -84,7 +84,7 @@ workflows:
           cd frontend/ios
           pod install --repo-update
 
-      - name: Build unsigned iOS app
+      - name: Archive unsigned iOS app
         script: |
           cd frontend/ios
 
@@ -100,34 +100,39 @@ workflows:
           echo "Workspace: $WORKSPACE"
           echo "Scheme: $APP_SCHEME"
 
-          xcodebuild clean build \
+          rm -rf build
+          mkdir -p build
+
+          xcodebuild clean archive \
             -workspace "$WORKSPACE" \
             -scheme "$APP_SCHEME" \
             -configuration Release \
             -sdk iphoneos \
-            -derivedDataPath build \
+            -destination "generic/platform=iOS" \
+            -archivePath build/iPadYouTubeClient.xcarchive \
             IPHONEOS_DEPLOYMENT_TARGET=12.4 \
+            SKIP_INSTALL=NO \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             PROVISIONING_PROFILE_SPECIFIER=""
 
-          echo "Release products:"
-          ls -lah build/Build/Products/Release-iphoneos || true
+          echo "Archive contents:"
+          find build/iPadYouTubeClient.xcarchive -maxdepth 5 -type d | head -n 100
 
-          echo "Apps in Release-iphoneos:"
-          find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d -print || true
+          echo "Apps inside archive:"
+          find build/iPadYouTubeClient.xcarchive -name "*.app" -type d -print
 
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
 
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" -type d | head -n 1)
+          APP_PATH=$(find build/iPadYouTubeClient.xcarchive/Products/Applications -maxdepth 1 -name "*.app" -type d | head -n 1)
 
           echo "APP_PATH=$APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERROR: real .app not found in Release-iphoneos"
+            echo "ERROR: .app not found inside archive"
             find build -name "*.app" -type d -print || true
             exit 1
           fi
@@ -138,16 +143,19 @@ workflows:
             exit 1
           fi
 
-          APP_NAME=$(basename "$APP_PATH" .app)
-
-          if [ ! -f "$APP_PATH/$APP_NAME" ]; then
-            echo "WARNING: executable with app name not found, listing app contents:"
-            ls -lah "$APP_PATH"
-          fi
-
           echo "Real app size:"
           du -sh "$APP_PATH"
-          find "$APP_PATH" -maxdepth 2 -type f | head -n 50
+
+          echo "App contents:"
+          ls -lah "$APP_PATH" | head -n 50
+
+          echo "Ad-hoc signing frameworks and app for jailbreak/AppSync..."
+          if [ -d "$APP_PATH/Frameworks" ]; then
+            find "$APP_PATH/Frameworks" -type f -perm +111 -exec codesign --force --sign - --timestamp=none {} \; || true
+            find "$APP_PATH/Frameworks" -name "*.framework" -type d -exec codesign --force --sign - --timestamp=none {} \; || true
+          fi
+
+          codesign --force --sign - --timestamp=none "$APP_PATH" || true
 
           rm -rf Payload
           mkdir -p Payload
