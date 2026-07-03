@@ -6,7 +6,6 @@ workflows:
 
     environment:
       node: 18
-      xcode: 16.0
       cocoapods: default
 
     scripts:
@@ -21,6 +20,20 @@ workflows:
           export CI=1
           export EXPO_NO_TELEMETRY=1
           npx expo prebuild --platform ios --clean
+
+      - name: Fix node path for Xcode bundle phase
+        script: |
+          cd frontend
+
+          # The "Bundle React Native code and images" phase runs under a shell
+          # with a restricted PATH and often cannot find node via `command -v`.
+          # Bake the absolute node path into .xcode.env(.local).
+          NODE_PATH=$(command -v node)
+          echo "Using node at: $NODE_PATH"
+          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env
+          echo "export NODE_BINARY=$NODE_PATH" > ios/.xcode.env.local
+          echo "----- ios/.xcode.env -----"
+          cat ios/.xcode.env
 
       - name: Force iOS deployment target 12.4
         script: |
@@ -39,10 +52,6 @@ workflows:
         script: |
           cd frontend
 
-          # RCT-Folly json.cpp fails on Xcode 16 because new libc++ removed
-          # std::unary_function / std::binary_function. Re-enable them for ALL
-          # pod targets via post_install (command-line override would clobber
-          # folly's own required defines, so we inject into the Podfile instead).
           cat > inject_folly_fix.rb <<'RUBY'
           podfile = "ios/Podfile"
           content = File.read(podfile)
@@ -70,7 +79,6 @@ workflows:
             File.write(podfile, content)
             puts "folly fix injected into existing post_install"
           else
-            # No post_install block exists -> append one.
             content << "\n\npost_install do |installer|\n#{inject}\nend\n"
             File.write(podfile, content)
             puts "folly fix appended as new post_install"
@@ -127,10 +135,33 @@ workflows:
           cd frontend/ios
           RUBYOPT="-r$(pwd)/podfile_patch.rb" pod install --repo-update
 
+      - name: Pre-bundle JS (diagnostic, real Metro errors surface here)
+        script: |
+          cd frontend
+
+          # Detect the JS entry file the same way Metro does (package.json main).
+          ENTRY=$(node -e "console.log(require('./package.json').main || 'index.js')")
+          echo "Entry file: $ENTRY"
+
+          # Build the JS bundle standalone so any JS/Metro error is shown clearly
+          # (instead of being buried inside the Xcode script phase log).
+          npx react-native bundle \
+            --platform ios \
+            --dev false \
+            --entry-file "$ENTRY" \
+            --bundle-output ios/main.jsbundle \
+            --assets-dest ios/assets
+
+          echo "JS bundle built OK:"
+          ls -lh ios/main.jsbundle
+
       - name: Build unsigned iOS app
         script: |
           cd frontend/ios
           set -e
+
+          export NODE_BINARY="$(command -v node)"
+          echo "NODE_BINARY=$NODE_BINARY"
 
           WORKSPACE=$(find . -maxdepth 1 -type d -name "*.xcworkspace" | head -n 1)
           if [ -z "$WORKSPACE" ]; then echo "ERROR: .xcworkspace not found"; exit 1; fi
