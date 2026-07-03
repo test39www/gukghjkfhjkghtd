@@ -13,21 +13,26 @@ workflows:
       - name: Install dependencies
         script: |
           cd frontend
-          npm install
+          npm install --legacy-peer-deps
 
       - name: Generate iOS project
         script: |
           cd frontend
+          export CI=1
+          export EXPO_NO_TELEMETRY=1
           npx expo prebuild --platform ios --clean
 
       - name: Force iOS deployment target 12.0
         script: |
           cd frontend
+
           if grep -q "platform :ios" ios/Podfile; then
             sed -i '' "s/platform :ios.*/platform :ios, '12.0'/" ios/Podfile
           else
             printf "platform :ios, '12.0'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
+
+          echo "Podfile first lines:"
           head -n 15 ios/Podfile
 
       - name: Install CocoaPods
@@ -38,8 +43,10 @@ workflows:
       - name: Build unsigned iOS app
         script: |
           cd frontend/ios
+
           WORKSPACE=$(ls *.xcworkspace | head -n 1)
           SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/ {getline; print $1}')
+
           echo "Workspace: $WORKSPACE"
           echo "Scheme: $SCHEME"
 
@@ -56,14 +63,27 @@ workflows:
       - name: Create unsigned IPA
         script: |
           cd frontend/ios
+
           APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+
           echo "APP_PATH=$APP_PATH"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: .app file not found"
+            exit 1
+          fi
 
           rm -rf Payload
           mkdir -p Payload
+
           cp -R "$APP_PATH" Payload/
+
           zip -r unsigned.ipa Payload
 
+          mkdir -p ../build-output
+          cp unsigned.ipa ../build-output/ipad-youtube-client-unsigned.ipa
+
     artifacts:
+      - frontend/build-output/ipad-youtube-client-unsigned.ipa
       - frontend/ios/unsigned.ipa
       - frontend/ios/build/Build/Products/Release-iphoneos/*.app
