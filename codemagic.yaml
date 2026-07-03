@@ -32,6 +32,7 @@ workflows:
             printf "platform :ios, '12.4'\n" | cat - ios/Podfile > ios/Podfile.tmp && mv ios/Podfile.tmp ios/Podfile
           fi
 
+          echo "Podfile first lines:"
           head -n 20 ios/Podfile
 
       - name: Patch old Expo SDK 46 for new Ruby
@@ -83,6 +84,33 @@ workflows:
         script: |
           cd frontend/ios
           pod install --repo-update
+
+      - name: Patch RCT-Folly Time.h for new Xcode
+        script: |
+          cd frontend/ios
+
+          echo "Patching RCT-Folly Time.h..."
+
+          FILES="
+          Pods/RCT-Folly/folly/portability/Time.h
+          Pods/Headers/Private/RCT-Folly/folly/portability/Time.h
+          "
+
+          for FILE in $FILES; do
+            if [ -f "$FILE" ]; then
+              echo "Patching $FILE"
+
+              sed -i '' 's/typedef uint8_t clockid_t;/\/\/ typedef uint8_t clockid_t;/' "$FILE"
+              sed -i '' 's/#define CLOCK_REALTIME 0/\/\/ #define CLOCK_REALTIME 0/' "$FILE"
+              sed -i '' 's/#define CLOCK_MONOTONIC 1/\/\/ #define CLOCK_MONOTONIC 1/' "$FILE"
+              sed -i '' 's/#define CLOCK_PROCESS_CPUTIME_ID 2/\/\/ #define CLOCK_PROCESS_CPUTIME_ID 2/' "$FILE"
+              sed -i '' 's/#define CLOCK_THREAD_CPUTIME_ID 3/\/\/ #define CLOCK_THREAD_CPUTIME_ID 3/' "$FILE"
+
+              grep -n "clockid_t\|CLOCK_REALTIME\|CLOCK_MONOTONIC" "$FILE" || true
+            else
+              echo "File not found: $FILE"
+            fi
+          done
 
       - name: Archive unsigned iOS app
         script: |
